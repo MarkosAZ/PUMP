@@ -1,0 +1,17 @@
+{
+  "watchlist": [],
+  "discovery_limit": 10,
+  "rpc_url": "https://api.mainnet-beta.solana.com",
+  "request_delay_seconds": 1.0,
+  "new_pair_max_hours": 72,
+  "established_pair_min_days": 7,
+  "new_min_liquidity_usd": 10000,
+  "established_min_liquidity_usd": 100000,
+  "max_observed_owner_pct": 10,
+  "quote_max_age_seconds": 900,
+  "paper_slippage_bps": 200,
+  "paper_fee_usd_per_side": 0.02,
+  "paper_max_position_usd": 100,
+  "paper_max_exposure_usd": 500,
+  "x_evidence": {}
+}
