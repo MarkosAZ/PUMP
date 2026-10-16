@@ -25,7 +25,7 @@ python -m pump --config config.json scan --output .local/report.json
 python -m pump --config config.json watch --interval 300
 ```
 
-`watch` imprime los resultados y alertas en la terminal y actualiza `.local/report.json`. Detén el proceso con Ctrl+C. Un ordenador encendido puede ejecutarlo sin contratar alojamiento; este proyecto no garantiza un servidor gratuito activo las 24 horas. No hay envío a Telegram en esta versión.
+`watch` imprime los resultados y alertas en la terminal y actualiza `.local/report.json`. Detén el proceso con Ctrl+C. Un ordenador encendido puede ejecutarlo sin contratar alojamiento; este proyecto no garantiza un servidor gratuito activo las 24 horas. Las notificaciones de [Telegram](#telegram-opcional) se activan explícitamente con `--telegram`.
 
 Opciones globales `--config`, `--db` y `--synthetic` van **antes** del comando. Ayuda: `python -m pump --help`.
 
@@ -107,6 +107,58 @@ Valores iniciales configurables: USD 100 como máximo por posición, USD 500 de 
 El precio consultado no es una cotización ejecutable. La simulación no verifica impacto real, orden de ejecución, MEV, prioridad, transacciones fallidas, capacidad de vender ni disponibilidad de una ruta. Puede mostrar una venta ficticia de un token imposible de vender realmente. No se debe interpretar su resultado como rentabilidad realizable.
 
 Datos reales y sintéticos se guardan en bases distintas; el programa rechaza mezclarlos. `.local/`, `config.json`, bases SQLite y archivos `.env` están ignorados por Git. No guardes claves privadas ni semillas: esta aplicación no las necesita.
+
+## Telegram opcional
+
+La integración utiliza la API oficial de Telegram con la biblioteca estándar. Envía mensajes a un único chat elegido; no escucha órdenes ni ejecuta compras desde Telegram. No necesita servidor web, puertos públicos, paquetes adicionales ni activar envíos de pago. El proceso del screener debe permanecer ejecutándose para enviar novedades.
+
+1. Abre [@BotFather](https://t.me/BotFather), el bot oficial, y envía `/newbot`. Elige nombre y un usuario terminado en `bot`. BotFather entrega un **token secreto**: no lo pegues en chats, código, URLs del navegador ni GitHub.
+2. Abre el chat privado con el bot que creaste y pulsa **Iniciar** o envía `/start`.
+3. Configura `TELEGRAM_BOT_TOKEN` mediante el almacén de secretos de tu entorno. En este entorno de Codex se ha guardado el requisito para `api.telegram.org`; todavía no se ha suministrado ningún valor. Revisa y guarda la configuración del entorno y publica los cambios para conservarlos. En tu equipo puedes introducirlo en una sesión de Bash sin incluirlo en el historial:
+
+   ```bash
+   read -rsp "Token de BotFather: " TELEGRAM_BOT_TOKEN
+   export TELEGRAM_BOT_TOKEN
+   ```
+
+4. Consulta los identificadores de chats privados pendientes. El comando solo muestra IDs, no textos, nombres ni el token:
+
+   ```bash
+   python -m pump telegram-chat-id
+   ```
+
+   Guarda el ID de tu chat en la variable `TELEGRAM_CHAT_ID` de la configuración del entorno. Para una sesión local de Bash:
+
+   ```bash
+   read -rp "ID numérico de tu chat: " TELEGRAM_CHAT_ID
+   export TELEGRAM_CHAT_ID
+   ```
+
+5. Envía una prueba explícita y, cuando Telegram la confirme, inicia la vigilancia:
+
+   ```bash
+   python -m pump telegram-test
+   python -m pump watch --interval 300 --telegram
+   ```
+
+Para una sola consulta con envío: `python -m pump scan --telegram`. Las variables se leen del proceso; el programa no carga automáticamente archivos `.env`. Reinicia el proceso después de cambiar sus variables. No hace falta configurar un token para usar el screener sin `--telegram`.
+
+El primer informe se envía al terminar la primera consulta. Después, `watch` envía un resumen horario, cambios en disponibilidad de las fuentes y alertas de riesgo que detecte cada consulta. No envía un mensaje por cada token. Guarda el último envío confirmado en SQLite para evitar duplicarlo al reiniciar; no marca fallos como entregados. Una caída de red después de que Telegram acepte el mensaje puede causar una entrega de estado desconocido y un duplicado posterior: no hay garantía de entrega exactamente una vez. Los límites `429` respetan `retry_after` dentro del proceso activo. Un fallo de envío conserva la consulta y el informe local; un comando de un solo ciclo devuelve código `1` si obtuvo datos pero el envío falló.
+
+Los resúmenes incluyen hasta cinco tokens, dando prioridad a los que tienen alertas de riesgo y después al orden de observación. Muestran contratos, motivos de descarte, alertas y limitaciones. Las horas se muestran en UTC-05. No convierten una revisión pendiente en una recomendación de compra y mantienen visibles las limitaciones de X, distribución y rug pulls.
+
+Puedes previsualizar el mensaje sin credenciales ni conexión:
+
+```bash
+python -m pump demo
+python -m pump --synthetic telegram-preview
+# O usa el último informe real existente:
+python -m pump telegram-preview
+```
+
+Si `telegram-chat-id` no encuentra tu chat, envía `/start` al bot y vuelve a intentarlo. Un bot no puede iniciar por sí solo una conversación privada. Si otro programa ya gestiona sus actualizaciones o tiene un webhook configurado, el comando puede fallar; no elimina webhooks ni modifica ese otro programa. Elige un bot dedicado o usa el ID que ya conozcas. Un `401` requiere revisar el token; un `403`, el acceso al chat; los errores de red requieren acceso HTTPS a `api.telegram.org`. El programa no imprime respuestas de error de Telegram que puedan revelar credenciales.
+
+**Validación de Telegram:** formato, límites de mensaje, destinatario, deduplicación, errores y comandos se probaron con respuestas simuladas. Todavía no se ha verificado una entrega real porque no hay un token ni un chat configurados. El screener permanece detenido hasta que se inicie explícitamente.
 
 ## Qué falta para el objetivo completo
 

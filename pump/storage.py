@@ -37,6 +37,15 @@ class Store:
     def close(self):
         self.db.close()
 
+    def get_metadata(self, key):
+        row = self.db.execute("SELECT value FROM metadata WHERE key=?", (key,)).fetchone()
+        return row[0] if row else None
+
+    def set_metadata(self, key, value):
+        with self.db:
+            self.db.execute("INSERT INTO metadata(key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+                            (key, value))
+
     def record_scan(self, results, errors, now):
         with self.db:
             scan_id = self.db.execute("INSERT INTO scans(observed_at, errors) VALUES (?, ?)",

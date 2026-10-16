@@ -10,6 +10,7 @@ from .demo import run_demo
 from .providers import PublicSources
 from .scanner import scan
 from .storage import Store
+from .telegram import ReportNotifier, TelegramClient, TelegramError, format_report
 
 
 def display(report):
@@ -49,10 +50,16 @@ def parser():
     for name in ("scan", "demo", "report"):
         cmd = commands.add_parser(name)
         cmd.add_argument("--output", help="Guardar informe JSON con procedencia y errores")
+        if name == "scan":
+            cmd.add_argument("--telegram", action="store_true", help="Enviar resumen al chat configurado explícitamente")
     watch = commands.add_parser("watch")
     watch.add_argument("--interval", type=int, default=300, help="Segundos entre consultas; mínimo 60")
     watch.add_argument("--cycles", type=int, default=0, help="0: hasta Ctrl+C; otro entero: número de ciclos")
     watch.add_argument("--output", default=".local/report.json")
+    watch.add_argument("--telegram", action="store_true", help="Activar resumen horario y alertas en Telegram")
+    commands.add_parser("telegram-preview", help="Ver el mensaje del último informe, sin conexión ni envío")
+    commands.add_parser("telegram-chat-id", help="Consultar IDs de chats privados recientes; requiere el token")
+    commands.add_parser("telegram-test", help="Enviar un mensaje de prueba al chat configurado")
     buy = commands.add_parser("paper-open", help="Registrar compra FICTICIA manual, incluso de tokens de riesgo")
     buy.add_argument("mint")
     buy.add_argument("--usd", type=float, required=True)
@@ -67,30 +74,56 @@ def main(argv=None):
     store = None
     try:
         config = load_config(args.config)
+        if args.command == "telegram-chat-id":
+            ids = TelegramClient.from_env(require_chat=False).private_chat_ids()
+            print(json.dumps({"private_chat_ids": ids}, indent=2))
+            if not ids:
+                print("Abre tu bot en Telegram, pulsa Iniciar y vuelve a ejecutar este comando.")
+            return 0
+        if args.command == "telegram-test":
+            TelegramClient.from_env().send("PUMP: conexión de Telegram configurada. Mensaje de prueba; sin compras reales.")
+            print("Telegram confirmó el envío del mensaje de prueba.")
+            return 0
+        client = TelegramClient.from_env() if getattr(args, "telegram", False) else None
         synthetic = args.command == "demo" or args.synthetic
         if synthetic and args.command in ("scan", "watch"):
             raise ValueError("scan/watch requieren una base de datos real, sin --synthetic")
         db_path = args.db or (".local/demo.sqlite3" if synthetic else ".local/live.sqlite3")
-        if args.command in ("report", "positions", "paper-open", "paper-close") and not Path(db_path).is_file():
+        if args.command in ("report", "positions", "paper-open", "paper-close", "telegram-preview") and not Path(db_path).is_file():
             raise ValueError("Base no encontrada; ejecuta demo o scan primero")
         if args.command == "watch" and (args.interval < 60 or args.cycles < 0):
             raise ValueError("watch requiere intervalo >=60 segundos y cycles >=0")
         store = Store(db_path, "synthetic" if synthetic else "live")
+        if args.command == "telegram-preview":
+            report = store.report()
+            if report["scan_id"] is None:
+                raise ValueError("Sin informe para previsualizar; ejecuta demo o scan primero")
+            print(format_report(report))
+            return 0
         if args.command == "demo":
             report = run_demo(store, config, time.time())
         elif args.command in ("scan", "watch"):
             sources = PublicSources(config["rpc_url"], config["request_delay_seconds"])
+            notifier = ReportNotifier(client, store) if client else None
             cycles = 0
             while True:
                 report = scan(sources, store, config)
                 display(report)
                 if args.output:
                     save_report(report, args.output)
+                notification_failed = False
+                if notifier:
+                    try:
+                        if notifier.notify(report):
+                            print("Telegram confirmó el envío del resumen.")
+                    except TelegramError as exc:
+                        notification_failed = True
+                        print(f"Telegram: {exc}. Historial y consulta local conservados.", file=sys.stderr)
                 if args.command == "scan":
-                    return 2 if not report["results"] else (1 if report["errors"] else 0)
+                    return 2 if not report["results"] else (1 if report["errors"] or notification_failed else 0)
                 cycles += 1
                 if args.cycles and cycles >= args.cycles:
-                    return 2 if not report["results"] else (1 if report["errors"] else 0)
+                    return 2 if not report["results"] else (1 if report["errors"] or notification_failed else 0)
                 time.sleep(args.interval)
         elif args.command == "report":
             report = store.report()
@@ -109,7 +142,7 @@ def main(argv=None):
         if args.output:
             save_report(report, args.output)
         return 0 if report["scan_id"] else 2
-    except (ValueError, OSError) as exc:
+    except (ValueError, OSError, TelegramError) as exc:
         print(f"Error: {exc}", file=sys.stderr)
         return 2
     except KeyboardInterrupt:
